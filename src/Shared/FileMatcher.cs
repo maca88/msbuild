@@ -15,6 +15,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Globalization;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.Build.Utilities;
 
 namespace Microsoft.Build.Shared
@@ -663,7 +664,7 @@ namespace Microsoft.Build.Shared
         /// <param name="searchesToExcludeInSubdirs">exclude patterns that might activate farther down the directory tree. Keys assume paths are normalized with forward slashes and no trailing slashes</param>
         private static void GetFilesRecursive
         (
-            IList<string> listOfFiles,
+            ConcurrentBag<string> listOfFiles,
             RecursionState recursionState,
             string projectDirectory,
             bool stripProjectDirectory,
@@ -756,7 +757,7 @@ namespace Microsoft.Build.Shared
 
             if (nextStep.Subdirs != null)
             {
-                foreach (string subdir in nextStep.Subdirs)
+                Parallel.ForEach(nextStep.Subdirs, subdir =>
                 {
                     //  RecursionState is a struct so this copies it
                     var newRecursionState = recursionState;
@@ -810,7 +811,7 @@ namespace Microsoft.Build.Shared
                         getFileSystemEntries,
                         newSearchesToExclude,
                         searchesToExcludeInSubdirs);
-                }
+                });
             }
         }
 
@@ -1436,11 +1437,17 @@ namespace Microsoft.Build.Shared
             }
             else
             {
+                var dict = new ConcurrentDictionary<string, string[]>();
                 string[] files = GetFiles(
                     projectDirectoryUnescaped,
                     filespecUnescaped,
                     excludeSpecsUnescaped,
-                    s_defaultGetFileSystemEntries,
+                    // Cache IO operation results for better performance
+                    (type, path, pattern, directory, projectDirectory) =>
+                    {
+                        return dict.GetOrAdd($"{type};{path};{pattern};{directory};{projectDirectory}",
+                            s => s_defaultGetFileSystemEntries(type, path, pattern, directory, projectDirectory));
+                    },
                     s_defaultDirectoryExists);
                 return files;
             }
@@ -1803,7 +1810,7 @@ namespace Microsoft.Build.Shared
              * This is because it's cheaper to add items to an IList and this code
              * might potentially do a lot of that.
              */
-            var listOfFiles = new List<string>();
+            var listOfFiles = new ConcurrentBag<string>();
 
             /*
              * Now get the files that match, starting at the lowest fixed directory.
