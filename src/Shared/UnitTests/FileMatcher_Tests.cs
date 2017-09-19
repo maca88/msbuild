@@ -13,11 +13,61 @@ using Microsoft.Build.Engine.UnitTests;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Shared;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Microsoft.Build.UnitTests
 {
     public class FileMatcherTest
     {
+        private readonly ITestOutputHelper _output;
+
+        public FileMatcherTest(ITestOutputHelper output)
+        {
+            _output = output;
+        }
+
+        [Fact]
+        public void GetFilesPerformance()
+        {
+            var path = @"C:\Workspace\Git\AsyncGenerator\Source\AsyncGenerator.Tests\ExternalProjects\NHibernate\Source\src\NHibernate.Test";
+            var globalWatch = new Stopwatch();
+            var watch = new Stopwatch();
+            var results = new List<string>();
+            string GetFiles(string fileSpec, string[] excludeSpec)
+            {
+                watch.Restart();
+                var files = FileMatcher.GetFiles(path, fileSpec, excludeSpec);
+                watch.Stop();
+                return $"File spec: {fileSpec}, Call time: {watch.ElapsedMilliseconds}ms, Returned files: {files.Length}";
+            }
+
+            globalWatch.Start();
+            results.Add(GetFiles(@"**/*", new[]
+            {
+                @"obj\/**", @"**\*.hbm.xml", @"bin\Debug\/**", @"**/*.resx", @"**/.*/**", @"packages/**",
+                @"**/*.vssscc", @"**/*.cs", @"**/*.sln", @"**/*.*proj", @"**/*.user", @"obj\Debug\/**", @"**\*.jpg",
+                @"bin\/**"
+            }));
+            results.Add(GetFiles(@"**/*.cs", new[]
+            {
+                @"obj\/**", @"bin\Debug\/**", @"**/.*/**", @"packages/**", @"**/*.vssscc", @"**/*.sln", @"**/*.*proj",
+                @"**/*.user", @"obj\Debug\/**", @"bin\/**"
+            }));
+            results.Add(GetFiles(@"**/*.resx", new[]
+            {
+                @"obj\/**", @"bin\Debug\/**", @"**/.*/**", @"packages/**", @"**/*.vssscc", @"**/*.sln", @"**/*.*proj",
+                @"**/*.user", @"obj\Debug\/**", @"bin\/**"
+            }));
+            results.Add(GetFiles(@"**\*.hbm.xml", new[] { @"bin\**\*.*" }));
+            results.Add(GetFiles(@"**\*.jpg", null));
+            globalWatch.Stop();
+
+            _output.WriteLine(
+                string.Join(Environment.NewLine, results) +
+                $"{Environment.NewLine}Total time: {globalWatch.ElapsedMilliseconds}ms"
+            );
+        }
+
         /*
          * Method:  GetFileSystemEntries
          *
