@@ -1436,11 +1436,17 @@ namespace Microsoft.Build.Shared
             }
             else
             {
+                var cache = new ConcurrentDictionary<string, string[]>();
                 string[] files = GetFiles(
                     projectDirectoryUnescaped,
                     filespecUnescaped,
                     excludeSpecsUnescaped,
-                    s_defaultGetFileSystemEntries,
+                    // Cache IO operation results for better performance
+                    (type, path, pattern, directory, projectDirectory) =>
+                    {
+                        return cache.GetOrAdd($"{type};{path};{pattern};{directory};{projectDirectory}",
+                            s => s_defaultGetFileSystemEntries(type, path, pattern, directory, projectDirectory));
+                    },
                     s_defaultDirectoryExists);
                 return files;
             }
