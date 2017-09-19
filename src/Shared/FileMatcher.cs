@@ -1399,7 +1399,8 @@ namespace Microsoft.Build.Shared
         (
             string projectDirectoryUnescaped,
             string filespecUnescaped,
-            IEnumerable<string> excludeSpecsUnescaped = null
+            IEnumerable<string> excludeSpecsUnescaped = null,
+            ConcurrentDictionary<string, string[]> cache = null
         )
         {
             // Possible future improvement: make sure file existence caching happens only at evaluation time, and maybe only within a build session. https://github.com/Microsoft/msbuild/issues/2306
@@ -1436,7 +1437,7 @@ namespace Microsoft.Build.Shared
             }
             else
             {
-                var cache = new ConcurrentDictionary<string, string[]>();
+                cache = cache ?? new ConcurrentDictionary<string, string[]>();
                 string[] files = GetFiles(
                     projectDirectoryUnescaped,
                     filespecUnescaped,
