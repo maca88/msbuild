@@ -773,7 +773,7 @@ namespace Microsoft.Build.Shared
                         for (int i = 0; i < excludeNextSteps.Length; i++)
                         {
                             if (excludeNextSteps[i].Subdirs != null &&
-                                excludeNextSteps[i].Subdirs.Any(excludedDir => FileUtilities.PathsEqual(excludedDir, subdir)))
+                                excludeNextSteps[i].Subdirs.Any(excludedDir => excludedDir == subdir))
                             {
                                 RecursionState thisExcludeStep = searchesToExclude[i];
                                 thisExcludeStep.BaseDirectory = subdir;
@@ -1445,7 +1445,17 @@ namespace Microsoft.Build.Shared
                     (type, path, pattern, directory, projectDirectory) =>
                     {
                         return cache.GetOrAdd($"{type};{path};{pattern};{directory};{projectDirectory}",
-                            s => s_defaultGetFileSystemEntries(type, path, pattern, directory, projectDirectory));
+                            s =>
+                            {
+                                var items = s_defaultGetFileSystemEntries(type, path, pattern, directory, projectDirectory);
+                                // In order to avoid calling FileUtilities.PathsEqual for sub directories we normalize
+                                // directory paths, so we can replace FileUtilities.PathsEqual with == operator
+                                if (type == FileSystemEntity.Directories)
+                                {
+                                    return items.Select(o => o.NormalizeForPathComparison()).ToArray();
+                                }
+                                return items;
+                            });
                     },
                     s_defaultDirectoryExists);
                 return files;
