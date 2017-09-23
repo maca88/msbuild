@@ -6,6 +6,7 @@
 //-----------------------------------------------------------------------
 
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
@@ -1429,6 +1430,75 @@ namespace Microsoft.Build.Shared
         }
 
         /// <summary>
+        /// Source: https://stackoverflow.com/a/34633464
+        /// </summary>
+        public class CachedEnumerable<T> : IEnumerable<T>, IDisposable
+        {
+            private IEnumerator<T> _enumerator;
+            private readonly List<T> _cache = new List<T>();
+
+            public CachedEnumerable(IEnumerable<T> enumerable)
+                : this(enumerable.GetEnumerator())
+            {
+            }
+
+            public CachedEnumerable(IEnumerator<T> enumerator)
+            {
+                _enumerator = enumerator;
+            }
+
+            public IEnumerator<T> GetEnumerator()
+            {
+                // The index of the current item in the cache.
+                int index = 0;
+
+                // Enumerate the _cache first
+                for (; index < _cache.Count; index++)
+                {
+                    yield return _cache[index];
+                }
+
+                // Continue enumeration of the original _enumerator, 
+                // until it is finished. 
+                // This adds items to the cache and increment 
+                for (; _enumerator != null && _enumerator.MoveNext(); index++)
+                {
+                    var current = _enumerator.Current;
+                    _cache.Add(current);
+                    yield return current;
+                }
+
+                if (_enumerator != null)
+                {
+                    _enumerator.Dispose();
+                    _enumerator = null;
+                }
+
+                // Some other users of the same instance of CachedEnumerable
+                // can add more items to the cache, 
+                // so we need to enumerate them as well
+                for (; index < _cache.Count; index++)
+                {
+                    yield return _cache[index];
+                }
+            }
+
+            public void Dispose()
+            {
+                if (_enumerator != null)
+                {
+                    _enumerator.Dispose();
+                    _enumerator = null;
+                }
+            }
+
+            IEnumerator IEnumerable.GetEnumerator()
+            {
+                return GetEnumerator();
+            }
+        }
+
+        /// <summary>
         /// Given a pattern (filespec) and a candidate filename (fileToMatch)
         /// return matching information.
         /// </summary>
@@ -1499,12 +1569,14 @@ namespace Microsoft.Build.Shared
         /// <param name="projectDirectoryUnescaped">The project directory.</param>
         /// <param name="filespecUnescaped">Get files that match the given file spec.</param>
         /// <param name="excludeSpecsUnescaped">Exclude files that match this file spec.</param>
+        /// <param name="cache">Cache that is used for retrieving directories without IO operations</param>
         /// <returns>The array of files.</returns>
         internal static string[] GetFiles
         (
             string projectDirectoryUnescaped,
             string filespecUnescaped,
-            IEnumerable<string> excludeSpecsUnescaped = null
+            IEnumerable<string> excludeSpecsUnescaped = null,
+            ConcurrentDictionary<string, IEnumerable<string>> cache = null
         )
         {
             // Possible future improvement: make sure file existence caching happens only at evaluation time, and maybe only within a build session. https://github.com/Microsoft/msbuild/issues/2306
@@ -1545,7 +1617,19 @@ namespace Microsoft.Build.Shared
                     projectDirectoryUnescaped,
                     filespecUnescaped,
                     excludeSpecsUnescaped,
-                    s_defaultGetFileSystemEntries,
+                    cache == null
+                        ? s_defaultGetFileSystemEntries
+                        : (type, path, pattern, directory, projectDirectory) =>
+                        {
+                            // Cache only directories, for files we probably won't ever hit the cache while open a project
+                            if (type == FileSystemEntity.Directories)
+                            {
+                                return cache.GetOrAdd($"{path};{pattern};{directory};{projectDirectory}",
+                                    s => new CachedEnumerable<string>(s_defaultGetFileSystemEntries(type, path, pattern,
+                                        directory, projectDirectory)));
+                            }
+                            return s_defaultGetFileSystemEntries(type, path, pattern, directory, projectDirectory);
+                        },
                     s_defaultDirectoryExists);
                 return files;
             }

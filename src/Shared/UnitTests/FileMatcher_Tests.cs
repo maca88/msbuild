@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
@@ -33,10 +34,11 @@ namespace Microsoft.Build.UnitTests
             var globalWatch = new Stopwatch();
             var watch = new Stopwatch();
             var results = new List<string>();
+            var cache = new ConcurrentDictionary<string, IEnumerable<string>>();
             string GetFiles(string fileSpec, string[] excludeSpec)
             {
                 watch.Restart();
-                var files = FileMatcher.GetFiles(path, fileSpec, excludeSpec);
+                var files = FileMatcher.GetFiles(path, fileSpec, excludeSpec, cache);
                 watch.Stop();
                 return $"File spec: {fileSpec}, Call time: {watch.ElapsedMilliseconds}ms, Returned files: {files.Length}";
             }
