@@ -68,6 +68,60 @@ namespace Microsoft.Build.UnitTests
             );
         }
 
+        [Fact]
+        public void GetFilesPatternMatching()
+        {
+            var workingPath = Path.Combine(Path.GetTempPath(), "Test");
+            var files = new string[]
+            {
+                "Foo.cs",
+                "Foo2.cs",
+                "file.txt",
+                "file1.txt",
+                "file1.txtother",
+                "fie1.txt",
+                "fire1.txt"
+            };
+
+            try
+            {
+                Directory.CreateDirectory(workingPath);
+                foreach (var file in files)
+                {
+                    File.WriteAllBytes(Path.Combine(workingPath + @"\", file), new byte[5000]);
+                }
+
+                var patterns = new Dictionary<string, int>
+                {
+                    {"*.txt", 4},
+                    { "???.cs", 1},
+                    { "????.cs", 1},
+                    {"file?.txt", 1},
+                    {"fi?e?.txt", 2},
+                    { "???.*", 1},
+                    { "????.*", 3},
+                    { "*.???", 4},
+                    { "f??e1.txt", 2}
+                };
+                foreach (var pattern in patterns)
+                {
+                    try
+                    {
+                        Assert.Equal(pattern.Value, FileMatcher.GetFiles(workingPath, pattern.Key).Length);
+                    }
+                    catch (Exception)
+                    {
+                        _output.WriteLine($"Pattern {pattern} failed");
+                        throw;
+                    }
+                }
+            }
+            finally
+            {
+                FileUtilities.DeleteWithoutTrailingBackslash(workingPath, true);
+            }
+        }
+
         /*
          * Method:  GetFileSystemEntries
          *
@@ -770,45 +824,45 @@ namespace Microsoft.Build.UnitTests
         public void RemoveProjectDirectory()
         {
             string[] strings = new string[1] { NativeMethodsShared.IsWindows ? "c:\\1.file" : "/1.file" };
-            FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\" : "/");
+            strings = FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\" : "/").ToArray();
             Assert.Equal(strings[0], "1.file");
 
             strings = new string[1] { NativeMethodsShared.IsWindows ? "c:\\directory\\1.file" : "/directory/1.file"};
-            FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\" : "/");
+            strings = FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\" : "/").ToArray();
             Assert.Equal(strings[0], NativeMethodsShared.IsWindows ? "directory\\1.file" : "directory/1.file");
 
             strings = new string[1] { NativeMethodsShared.IsWindows ? "c:\\directory\\1.file" : "/directory/1.file" };
-            FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\directory" : "/directory");
+            strings = FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\directory" : "/directory").ToArray();
             Assert.Equal(strings[0], "1.file");
 
             strings = new string[1] { NativeMethodsShared.IsWindows ? "c:\\1.file" : "/1.file" };
-            FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\directory" : "/directory" );
+            strings = FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\directory" : "/directory" ).ToArray();
             Assert.Equal(strings[0], NativeMethodsShared.IsWindows ? "c:\\1.file" : "/1.file");
 
             strings = new string[1] { NativeMethodsShared.IsWindows ? "c:\\directorymorechars\\1.file" : "/directorymorechars/1.file" };
-            FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\directory" : "/directory");
+            strings = FileMatcher.RemoveProjectDirectory(strings, NativeMethodsShared.IsWindows ? "c:\\directory" : "/directory").ToArray();
             Assert.Equal(strings[0], NativeMethodsShared.IsWindows ? "c:\\directorymorechars\\1.file" : "/directorymorechars/1.file" );
 
             if (NativeMethodsShared.IsWindows)
             {
                 strings = new string[1] { "\\Machine\\1.file" };
-                FileMatcher.RemoveProjectDirectory(strings, "\\Machine");
+                strings = FileMatcher.RemoveProjectDirectory(strings, "\\Machine").ToArray();
                 Assert.Equal(strings[0], "1.file");
 
                 strings = new string[1] { "\\Machine\\directory\\1.file" };
-                FileMatcher.RemoveProjectDirectory(strings, "\\Machine");
+                strings = FileMatcher.RemoveProjectDirectory(strings, "\\Machine").ToArray();
                 Assert.Equal(strings[0], "directory\\1.file");
 
                 strings = new string[1] { "\\Machine\\directory\\1.file" };
-                FileMatcher.RemoveProjectDirectory(strings, "\\Machine\\directory");
+                strings = FileMatcher.RemoveProjectDirectory(strings, "\\Machine\\directory").ToArray();
                 Assert.Equal(strings[0], "1.file");
 
                 strings = new string[1] { "\\Machine\\1.file" };
-                FileMatcher.RemoveProjectDirectory(strings, "\\Machine\\directory");
+                strings = FileMatcher.RemoveProjectDirectory(strings, "\\Machine\\directory").ToArray();
                 Assert.Equal(strings[0], "\\Machine\\1.file");
 
                 strings = new string[1] { "\\Machine\\directorymorechars\\1.file" };
-                FileMatcher.RemoveProjectDirectory(strings, "\\Machine\\directory");
+                strings = FileMatcher.RemoveProjectDirectory(strings, "\\Machine\\directory").ToArray();
                 Assert.Equal(strings[0], "\\Machine\\directorymorechars\\1.file");
             }
         }
