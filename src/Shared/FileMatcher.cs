@@ -16,6 +16,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Globalization;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.Build.Utilities;
 
 namespace Microsoft.Build.Shared
@@ -702,15 +703,17 @@ namespace Microsoft.Build.Shared
         /// <param name="getFileSystemEntries">Delegate.</param>
         /// <param name="searchesToExclude">Patterns to exclude from the results</param>
         /// <param name="searchesToExcludeInSubdirs">exclude patterns that might activate farther down the directory tree. Keys assume paths are normalized with forward slashes and no trailing slashes</param>
+        /// <param name="taskOptions">Options for setting the max amount of tasks that Parallel.ForEach is allowed to create</param>
         private static void GetFilesRecursive
         (
-            IList<string> listOfFiles,
+            ConcurrentStack<string> listOfFiles,
             RecursionState recursionState,
             string projectDirectory,
             bool stripProjectDirectory,
             GetFileSystemEntries getFileSystemEntries,
             IList<RecursionState> searchesToExclude,
-            Dictionary<string, List<RecursionState>> searchesToExcludeInSubdirs
+            Dictionary<string, List<RecursionState>> searchesToExcludeInSubdirs,
+            TaskOptions taskOptions
         )
         {
             ErrorUtilities.VerifyThrow((recursionState.SearchData.Filespec== null) || (recursionState.SearchData.RegexFileMatch == null),
@@ -754,12 +757,14 @@ namespace Microsoft.Build.Shared
 
             RecursiveStepResult nextStep = GetFilesRecursiveStep(recursionState);
 
+            IList<string> files = null;
             foreach (string file in GetFilesForStep(nextStep, recursionState, projectDirectory,
                 stripProjectDirectory, getFileSystemEntries))
             {
                 if (excludeNextSteps == null)
                 {
-                    listOfFiles.Add(file);
+                    files = files ?? new List<string>();
+                    files.Add(file);
                     continue;
                 }
                 var exclude = false;
@@ -774,16 +779,26 @@ namespace Microsoft.Build.Shared
                 }
                 if (!exclude)
                 {
-                    listOfFiles.Add(file);
+                    files = files ?? new List<string>();
+                    files.Add(file);
                 }
+            }
+            // Add all matched files at once to reduce thread contention
+            if (files != null && files.Any())
+            {
+                listOfFiles.PushRange(files.ToArray());
             }
 
             if (!nextStep.NeedDirectoryRecursion)
             {
                 return;
             }
-
-            foreach (string subdir in getFileSystemEntries(FileSystemEntity.Directories, recursionState.BaseDirectory, nextStep.DirectoryPattern, null, false))
+            // Calcuate the MaxDegreeOfParallelism value in order to prevent too much tasks beign created
+            int dop = Math.Min(taskOptions.MaxTasksPerIteration, taskOptions.AvailableTasks);
+            Interlocked.Exchange(ref taskOptions.AvailableTasks, Math.Max(taskOptions.AvailableTasks - dop, 1));
+            Parallel.ForEach(getFileSystemEntries(FileSystemEntity.Directories, recursionState.BaseDirectory, nextStep.DirectoryPattern, null, false),
+                new ParallelOptions { MaxDegreeOfParallelism = dop },
+                subdir =>
             {
                 //  RecursionState is a struct so this copies it
                 var newRecursionState = recursionState;
@@ -836,8 +851,10 @@ namespace Microsoft.Build.Shared
                     stripProjectDirectory,
                     getFileSystemEntries,
                     newSearchesToExclude,
-                    searchesToExcludeInSubdirs);
-            }
+                    searchesToExcludeInSubdirs,
+                    taskOptions);
+            });
+            Interlocked.Add(ref taskOptions.AvailableTasks, dop);
         }
 
         private static IEnumerable<string> GetFilesForStep
@@ -1430,66 +1447,74 @@ namespace Microsoft.Build.Shared
         }
 
         /// <summary>
-        /// Source: https://stackoverflow.com/a/34633464
+        /// Source: https://stackoverflow.com/a/12428250
         /// </summary>
-        public class CachedEnumerable<T> : IEnumerable<T>, IDisposable
+        /// <typeparam name="T"></typeparam>
+        internal class CachedEnumerable<T> : IEnumerable<T>
         {
-            private IEnumerator<T> _enumerator;
-            private readonly List<T> _cache = new List<T>();
+            private readonly object gate = new object();
+            private readonly IEnumerable<T> source;
+            private readonly List<T> cache = new List<T>();
+            private IEnumerator<T> enumerator;
+            private bool isCacheComplete;
 
-            public CachedEnumerable(IEnumerable<T> enumerable)
-                : this(enumerable.GetEnumerator())
+            public CachedEnumerable(IEnumerable<T> source)
             {
-            }
-
-            public CachedEnumerable(IEnumerator<T> enumerator)
-            {
-                _enumerator = enumerator;
+                this.source = source;
             }
 
             public IEnumerator<T> GetEnumerator()
             {
-                // The index of the current item in the cache.
-                int index = 0;
-
-                // Enumerate the _cache first
-                for (; index < _cache.Count; index++)
+                lock (gate)
                 {
-                    yield return _cache[index];
+                    if (isCacheComplete)
+                        return cache.GetEnumerator();
+                    if (enumerator == null)
+                        enumerator = source.GetEnumerator();
                 }
+                return GetCacheBuildingEnumerator();
+            }
 
-                // Continue enumeration of the original _enumerator, 
-                // until it is finished. 
-                // This adds items to the cache and increment 
-                for (; _enumerator != null && _enumerator.MoveNext(); index++)
+            public IEnumerator<T> GetCacheBuildingEnumerator()
+            {
+                var index = 0;
+                T item;
+                while (TryGetItem(index, out item))
                 {
-                    var current = _enumerator.Current;
-                    _cache.Add(current);
-                    yield return current;
-                }
-
-                if (_enumerator != null)
-                {
-                    _enumerator.Dispose();
-                    _enumerator = null;
-                }
-
-                // Some other users of the same instance of CachedEnumerable
-                // can add more items to the cache, 
-                // so we need to enumerate them as well
-                for (; index < _cache.Count; index++)
-                {
-                    yield return _cache[index];
+                    yield return item;
+                    index += 1;
                 }
             }
 
-            public void Dispose()
+            bool TryGetItem(int index, out T item)
             {
-                if (_enumerator != null)
+                lock (gate)
                 {
-                    _enumerator.Dispose();
-                    _enumerator = null;
+                    if (!IsItemInCache(index))
+                    {
+                        // The iteration may have completed while waiting for the lock.
+                        if (isCacheComplete)
+                        {
+                            item = default(T);
+                            return false;
+                        }
+                        if (!enumerator.MoveNext())
+                        {
+                            item = default(T);
+                            isCacheComplete = true;
+                            enumerator.Dispose();
+                            return false;
+                        }
+                        cache.Add(enumerator.Current);
+                    }
+                    item = cache[index];
+                    return true;
                 }
+            }
+
+            bool IsItemInCache(int index)
+            {
+                return index < cache.Count;
             }
 
             IEnumerator IEnumerable.GetEnumerator()
@@ -1776,6 +1801,12 @@ namespace Microsoft.Build.Shared
             return new[] { filespecUnescaped };
         }
 
+        class TaskOptions
+        {
+            public int AvailableTasks;
+            public int MaxTasksPerIteration;
+        }
+
         /// <summary>
         /// Given a filespec, find the files that match. 
         /// Will never throw IO exceptions: if there is no match, returns the input verbatim.
@@ -1972,13 +2003,18 @@ namespace Microsoft.Build.Shared
              * This is because it's cheaper to add items to an IList and this code
              * might potentially do a lot of that.
              */
-            var listOfFiles = new List<string>();
+            var listOfFiles = new ConcurrentStack<string>();
 
             /*
              * Now get the files that match, starting at the lowest fixed directory.
              */
             try
             {
+                var taskOptions = new TaskOptions
+                {
+                    AvailableTasks = Environment.ProcessorCount * 2,
+                    MaxTasksPerIteration = Math.Max(1, Environment.ProcessorCount / 2)
+                };
                 GetFilesRecursive(
                     listOfFiles,
                     state,
@@ -1986,7 +2022,8 @@ namespace Microsoft.Build.Shared
                     stripProjectDirectory,
                     getFileSystemEntries,
                     searchesToExclude,
-                    searchesToExcludeInSubdirs);
+                    searchesToExcludeInSubdirs,
+                    taskOptions);
             }
             catch (Exception ex) when (ExceptionHandling.IsIoRelatedException(ex))
             {
