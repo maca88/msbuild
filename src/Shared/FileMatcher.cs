@@ -1373,77 +1373,81 @@ namespace Microsoft.Build.Shared
         /// <summary>
         /// A wildcard (* and ?) matching algorithm that tests whether the input string matches against the pattern.
         /// </summary>
-        /// <remarks>Source: http://www.c-sharpcorner.com/uploadfile/b81385/efficient-string-matching-algorithm-with-use-of-wildcard-characters/</remarks>
         /// <param name="input">String which is matched against the pattern.</param>
         /// <param name="pattern">Pattern against which string is matched.</param>
         internal static bool IsMatch(string input, string pattern)
         {
-            if (pattern == "*")
+            // Parameter lengths
+            int patternLength = pattern.Length;
+            int inputLength = input.Length;
+
+            // Used to save the location when a * wildcard is found in the input string
+            int patternTmpIndex = patternLength;
+            int inputTmpIndex = inputLength;
+
+            // Current indexes
+            int patternIndex = 0;
+            int inputIndex = 0;
+
+            // Match until the first * wildcard or return if there is no match
+            while (inputIndex < inputLength && (patternIndex >= patternLength || pattern[patternIndex] != '*'))
             {
-                return true;
-            }
-            int[] inputPosStack = new int[(input.Length + 1) * (pattern.Length + 1)];   // Stack containing input positions that should be tested for further matching
-            int[] patternPosStack = new int[inputPosStack.Length];                      // Stack containing pattern positions that should be tested for further matching
-            int stackPos = -1;                                                          // Points to last occupied entry in stack; -1 indicates that stack is empty
-            bool[,] pointTested = new bool[input.Length + 1, pattern.Length + 1];       // Each true value indicates that input position vs. pattern position has been tested
-            int inputPos = 0;   // Position in input matched up to the first multiple wildcard in pattern
-            int patternPos = 0; // Position in pattern matched up to the first multiple wildcard in pattern
-            // Match beginning of the string until first multiple wildcard in pattern
-            while (inputPos < input.Length && patternPos < pattern.Length && pattern[patternPos] != '*' && (input[inputPos] == pattern[patternPos] || pattern[patternPos] == '?'))
-            {
-                inputPos++;
-                patternPos++;
-            }
-            // Push this position to stack if it points to end of pattern or to a general wildcard
-            if (patternPos == pattern.Length || pattern[patternPos] == '*')
-            {
-                pointTested[inputPos, patternPos] = true;
-                inputPosStack[++stackPos] = inputPos;
-                patternPosStack[stackPos] = patternPos;
-            }
-            bool matched = false;
-            // Repeat matching until either string is matched against the pattern or no more parts remain on stack to test
-            while (stackPos >= 0 && !matched)
-            {
-                inputPos = inputPosStack[stackPos];         // Pop input and pattern positions from stack
-                patternPos = patternPosStack[stackPos--];   // Matching will succeed if rest of the input string matches rest of the pattern
-                if (inputPos == input.Length && (patternPos == pattern.Length || (patternPos == pattern.Length - 1 && pattern[patternPos] == '*')))
-                    matched = true;     // Reached end of both pattern and input string, hence matching is successful
-                else
+                if (patternIndex >= patternLength || pattern[patternIndex] != input[inputIndex] && pattern[patternIndex] != '?')
                 {
-                    // First character in next pattern block is guaranteed to be multiple wildcard
-                    // So skip it and search for all matches in value string until next multiple wildcard character is reached in pattern
-                    for (int curInputStart = inputPos; curInputStart < input.Length; curInputStart++)
+                    return false;
+                }
+                inputIndex++;
+                patternIndex++;
+            }
+
+            while (inputIndex < inputLength)
+            {
+                if (patternIndex < patternLength)
+                {
+                    // Check if there is a * wildcard first as we can have it also in the input string
+                    if (pattern[patternIndex] == '*')
                     {
-                        int curInputPos = curInputStart;
-                        int curPatternPos = patternPos + 1;
-                        if (curPatternPos == pattern.Length)
-                        {   // Pattern ends with multiple wildcard, hence rest of the input string is matched with that character
-                            curInputPos = input.Length;
-                        }
-                        else
+                        // Skip all * wildcards if there are more than one
+                        while (++patternIndex < patternLength && pattern[patternIndex] == '*') { }
+
+                        if (patternIndex == patternLength)
                         {
-                            while (curInputPos < input.Length && curPatternPos < pattern.Length && pattern[curPatternPos] != '*' &&
-                                   (input[curInputPos] == pattern[curPatternPos] || pattern[curPatternPos] == '?'))
+                            return true;
+                        }
+
+                        // Skip to the first character that matches after the *, but only if the current character
+                        // is not a ? wildcard e.g. ("a", "*?")
+                        if (pattern[patternIndex] != '?')
+                        {
+                            while (input[inputIndex] != pattern[patternIndex])
                             {
-                                curInputPos++;
-                                curPatternPos++;
+                                if (++inputIndex >= inputLength)
+                                {
+                                    return false;
+                                }
                             }
                         }
-                        // If we have reached next multiple wildcard character in pattern without breaking the matching sequence, then we have another candidate for full match
-                        // This candidate should be pushed to stack for further processing
-                        // At the same time, pair (input position, pattern position) will be marked as tested, so that it will not be pushed to stack later again
-                        if (((curPatternPos == pattern.Length && curInputPos == input.Length) || (curPatternPos < pattern.Length && pattern[curPatternPos] == '*'))
-                            && !pointTested[curInputPos, curPatternPos])
-                        {
-                            pointTested[curInputPos, curPatternPos] = true;
-                            inputPosStack[++stackPos] = curInputPos;
-                            patternPosStack[stackPos] = curPatternPos;
-                        }
+                        patternTmpIndex = patternIndex;
+                        inputTmpIndex = inputIndex;
+                        continue;
+                    }
+
+                    if (pattern[patternIndex] == input[inputIndex] || pattern[patternIndex] == '?')
+                    {
+                        patternIndex++;
+                        inputIndex++;
+                        continue;
                     }
                 }
+                patternIndex = patternTmpIndex;
+                inputIndex = inputTmpIndex++;
             }
-            return matched;
+            // When we reach the end of the input we have to skip all * wildcards as they match also zero characters
+            while (patternIndex < patternLength && pattern[patternIndex] == '*')
+            {
+                patternIndex++;
+            }
+            return patternIndex >= patternLength;
         }
 
         /// <summary>

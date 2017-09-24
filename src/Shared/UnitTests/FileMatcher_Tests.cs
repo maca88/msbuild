@@ -124,6 +124,86 @@ namespace Microsoft.Build.UnitTests
             }
         }
 
+        [Fact]
+        public void WildcardMatching()
+        {
+            var inputs = new List<Tuple<string, string, bool>>
+            {
+                // No wildcards
+                new Tuple<string, string, bool>("a", "a", true),
+                new Tuple<string, string, bool>("a", "", false),
+                new Tuple<string, string, bool>("", "a", false),
+
+                // * wildcard
+                new Tuple<string, string, bool>("abc", "*bc", true),
+                new Tuple<string, string, bool>("abc", "a*c", true),
+                new Tuple<string, string, bool>("abc", "ab*", true),
+                new Tuple<string, string, bool>("ab", "*ab", true),
+                new Tuple<string, string, bool>("ab", "a*b", true),
+                new Tuple<string, string, bool>("ab", "ab*", true),
+                new Tuple<string, string, bool>("", "*", true),
+
+                // ? wildcard
+                new Tuple<string, string, bool>("abc", "?bc", true),
+                new Tuple<string, string, bool>("abc", "a?c", true),
+                new Tuple<string, string, bool>("abc", "ab?", true),
+                new Tuple<string, string, bool>("ab", "?ab", false),
+                new Tuple<string, string, bool>("ab", "a?b", false),
+                new Tuple<string, string, bool>("ab", "ab?", false),
+                new Tuple<string, string, bool>("", "?", false),
+
+                // Mixed wildcards
+                new Tuple<string, string, bool>("a", "*?", true),
+                new Tuple<string, string, bool>("a", "?*", true),
+                new Tuple<string, string, bool>("ab", "*?", true),
+                new Tuple<string, string, bool>("ab", "?*", true),
+                new Tuple<string, string, bool>("abc", "*?", true),
+                new Tuple<string, string, bool>("abc", "?*", true),
+
+                // Multiple mixed wildcards
+                new Tuple<string, string, bool>("a", "??", false),
+                new Tuple<string, string, bool>("ab", "?*?", true),
+                new Tuple<string, string, bool>("ab", "*?*?*", true),
+                new Tuple<string, string, bool>("abc", "?**?*?", true),
+                new Tuple<string, string, bool>("abc", "?**?*c?", false),
+                new Tuple<string, string, bool>("abcd", "?b*??", true),
+                new Tuple<string, string, bool>("abcd", "?a*??", false),
+                new Tuple<string, string, bool>("abcd", "?**?c?", true),
+                new Tuple<string, string, bool>("abcd", "?**?d?", false),
+                new Tuple<string, string, bool>("abcde", "?*b*?*d*?", true),
+
+                // ? wildcard in the input string
+                new Tuple<string, string, bool>("?", "?", true),
+                new Tuple<string, string, bool>("?a", "?a", true),
+                new Tuple<string, string, bool>("a?", "a?", true),
+                new Tuple<string, string, bool>("a?b", "a?", false),
+                new Tuple<string, string, bool>("a?ab", "a?aab", false),
+                new Tuple<string, string, bool>("aa?bbbc?d", "aa?bbc?dd", false),
+
+                // * wildcard in the input string
+                new Tuple<string, string, bool>("*", "*", true),
+                new Tuple<string, string, bool>("*a", "*a", true),
+                new Tuple<string, string, bool>("a*", "a*", true),
+                new Tuple<string, string, bool>("a*b", "a*", true),
+                new Tuple<string, string, bool>("a*ab", "a*aab", false),
+                new Tuple<string, string, bool>("a*abab", "a*b", true),
+                new Tuple<string, string, bool>("aa*bbbc*d", "aa*bbc*dd", false),
+                new Tuple<string, string, bool>("aa*bbbc*d", "a*bbc*d", true)
+            };
+            foreach (var input in inputs)
+            {
+                try
+                {
+                    Assert.Equal(input.Item3, FileMatcher.IsMatch(input.Item1, input.Item2));
+                }
+                catch (Exception)
+                {
+                    _output.WriteLine($"Input {input.Item1} with pattern {input.Item2} failed");
+                    throw;
+                }
+            }
+        }
+
         /*
          * Method:  GetFileSystemEntries
          *
