@@ -1377,28 +1377,29 @@ namespace Microsoft.Build.Shared
         /// <param name="pattern">Pattern against which string is matched.</param>
         internal static bool IsMatch(string input, string pattern)
         {
+            if (input == null)
+            {
+                throw new ArgumentNullException(nameof(input));
+            }
+            if (pattern == null)
+            {
+                throw new ArgumentNullException(nameof(pattern));
+            }
+
             // Parameter lengths
             int patternLength = pattern.Length;
             int inputLength = input.Length;
 
             // Used to save the location when a * wildcard is found in the input string
-            int patternTmpIndex = patternLength;
-            int inputTmpIndex = inputLength;
+            int patternTmpIndex = -1;
+            int inputTmpIndex = -1;
 
             // Current indexes
             int patternIndex = 0;
             int inputIndex = 0;
 
-            // Match until the first * wildcard or return if there is no match
-            while (inputIndex < inputLength && (patternIndex >= patternLength || pattern[patternIndex] != '*'))
-            {
-                if (patternIndex >= patternLength || pattern[patternIndex] != input[inputIndex] && pattern[patternIndex] != '?')
-                {
-                    return false;
-                }
-                inputIndex++;
-                patternIndex++;
-            }
+            // Store the information whether the tail was checked when a pattern "*?" occurred
+            bool tailChecked = false;
 
             while (inputIndex < inputLength)
             {
@@ -1410,34 +1411,70 @@ namespace Microsoft.Build.Shared
                         // Skip all * wildcards if there are more than one
                         while (++patternIndex < patternLength && pattern[patternIndex] == '*') { }
 
-                        if (patternIndex == patternLength)
+                        // Return if the last character is a * wildcard
+                        if (patternIndex >= patternLength)
                         {
                             return true;
                         }
-
-                        // Skip to the first character that matches after the *, but only if the current character
-                        // is not a ? wildcard e.g. ("a", "*?")
+                        // Skip to the first character that matches after the *, e.g. ("abcd", "*d")
+                        // The ? wildcard cannot be skipped as we will have a wrong result for e.g. ("aab" "*?b"),
+                        // instead we will try to match the tail of the pattern and input
                         if (pattern[patternIndex] != '?')
                         {
                             while (input[inputIndex] != pattern[patternIndex])
                             {
+                                // Return if there is no character that match e.g. ("aa", "*b")
                                 if (++inputIndex >= inputLength)
                                 {
                                     return false;
                                 }
                             }
                         }
+                        else if (!tailChecked)
+                        {
+                            // Iterate from the end of the pattern to the current pattern index
+                            // and hope that there is no * wildcard in order to return earlier
+                            int inputTailIndex = inputLength;
+                            int patternTailIndex = patternLength;
+                            while (patternIndex < patternTailIndex && inputTailIndex > 0)
+                            {
+                                patternTailIndex--;
+                                inputTailIndex--;
+                                if (pattern[patternTailIndex] == '*' || pattern[patternTailIndex] != input[inputTailIndex] && pattern[patternTailIndex] != '?')
+                                {
+                                    break;
+                                }
+                            }
+                            // If we encountered a * wildcard we are not sure if it matches as there can be zero or more than one characters
+                            // so we have to fallback to the standard procedure e.g. ("aaaabaaad", "*?b*d")
+                            if (pattern[patternTailIndex] != '*')
+                            {
+                                // We can return a success only if we reached the current pattern index
+                                return patternIndex >= patternTailIndex;
+                            }
+                            // Alter the lengths to the last valid match so that we don't need to match them again
+                            inputLength = ++inputTailIndex;
+                            patternLength = ++patternTailIndex;
+                            tailChecked = true; // Make sure that the tail is checked only once
+                        }
                         patternTmpIndex = patternIndex;
                         inputTmpIndex = inputIndex;
                         continue;
                     }
 
+                    // If we have a match, step to the next character
                     if (pattern[patternIndex] == input[inputIndex] || pattern[patternIndex] == '?')
                     {
                         patternIndex++;
                         inputIndex++;
                         continue;
                     }
+                }
+                // No match found, if we didn't found a location of a * wildcard, return false e.g. ("ab", "?ab")
+                // otherwise set the location after the previous * wildcard and try again with the next character in the input
+                if (patternTmpIndex < 0)
+                {
+                    return false;
                 }
                 patternIndex = patternTmpIndex;
                 inputIndex = inputTmpIndex++;
