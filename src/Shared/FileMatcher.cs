@@ -1416,9 +1416,37 @@ namespace Microsoft.Build.Shared
                         {
                             return true;
                         }
+
+                        // Mostly, we will be dealing with a file extension pattern e.g. "*.ext", so try to check the tail first
+                        if (!tailChecked)
+                        {
+                            // Iterate from the end of the pattern to the current pattern index
+                            // and hope that there is no * wildcard in order to return earlier
+                            int inputTailIndex = inputLength;
+                            int patternTailIndex = patternLength;
+                            while (patternIndex < patternTailIndex && inputTailIndex > 0)
+                            {
+                                patternTailIndex--;
+                                inputTailIndex--;
+                                // If we encountered a * wildcard we are not sure if it matches as there can be zero or more than one characters
+                                // so we have to fallback to the standard procedure e.g. ("aaaabaaad", "*?b*d")
+                                if (pattern[patternTailIndex] == '*' || pattern[patternTailIndex] != input[inputTailIndex] && pattern[patternTailIndex] != '?')
+                                {
+                                    break;
+                                }
+                                if (patternIndex == patternTailIndex)
+                                {
+                                    return true;
+                                }
+                            }
+                            // Alter the lengths to the last valid match so that we don't need to match them again
+                            inputLength = inputTailIndex + 1;
+                            patternLength = patternTailIndex + 1;
+                            tailChecked = true; // Make sure that the tail is checked only once
+                        }
+
                         // Skip to the first character that matches after the *, e.g. ("abcd", "*d")
-                        // The ? wildcard cannot be skipped as we will have a wrong result for e.g. ("aab" "*?b"),
-                        // instead we will try to match the tail of the pattern and input
+                        // The ? wildcard cannot be skipped as we will have a wrong result for e.g. ("aab" "*?b")
                         if (pattern[patternIndex] != '?')
                         {
                             while (input[inputIndex] != pattern[patternIndex])
@@ -1429,33 +1457,6 @@ namespace Microsoft.Build.Shared
                                     return false;
                                 }
                             }
-                        }
-                        else if (!tailChecked)
-                        {
-                            // Iterate from the end of the pattern to the current pattern index
-                            // and hope that there is no * wildcard in order to return earlier
-                            int inputTailIndex = inputLength;
-                            int patternTailIndex = patternLength;
-                            while (patternIndex < patternTailIndex && inputTailIndex > 0)
-                            {
-                                patternTailIndex--;
-                                inputTailIndex--;
-                                if (pattern[patternTailIndex] == '*' || pattern[patternTailIndex] != input[inputTailIndex] && pattern[patternTailIndex] != '?')
-                                {
-                                    break;
-                                }
-                            }
-                            // If we encountered a * wildcard we are not sure if it matches as there can be zero or more than one characters
-                            // so we have to fallback to the standard procedure e.g. ("aaaabaaad", "*?b*d")
-                            if (pattern[patternTailIndex] != '*')
-                            {
-                                // We can return a success only if we reached the current pattern index
-                                return patternIndex >= patternTailIndex;
-                            }
-                            // Alter the lengths to the last valid match so that we don't need to match them again
-                            inputLength = ++inputTailIndex;
-                            patternLength = ++patternTailIndex;
-                            tailChecked = true; // Make sure that the tail is checked only once
                         }
                         patternTmpIndex = patternIndex;
                         inputTmpIndex = inputIndex;
