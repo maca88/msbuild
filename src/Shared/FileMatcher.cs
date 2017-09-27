@@ -610,6 +610,8 @@ namespace Microsoft.Build.Shared
             public string[] Files;
             public string[] Subdirs;
             public string RemainingWildcardDirectory;
+            public string DirectoryPattern;
+            public bool NeedsDirectoryRecursion;
         }
 
         class FilesSearchData
@@ -719,6 +721,11 @@ namespace Microsoft.Build.Shared
                 projectDirectory,
                 stripProjectDirectory,
                 getFileSystemEntries);
+            if (nextStep.NeedsDirectoryRecursion)
+            {
+                nextStep.Subdirs = getFileSystemEntries(FileSystemEntity.Directories, recursionState.BaseDirectory, nextStep.DirectoryPattern, null, false);
+            }
+            
 
             RecursiveStepResult[] excludeNextSteps = null;
             if (searchesToExclude != null)
@@ -731,6 +738,12 @@ namespace Microsoft.Build.Shared
                         projectDirectory,
                         stripProjectDirectory,
                         getFileSystemEntries);
+                    if (excludeNextSteps[i].NeedsDirectoryRecursion)
+                    {
+                        excludeNextSteps[i].Subdirs = excludeNextSteps[i].DirectoryPattern == nextStep.DirectoryPattern
+                            ? nextStep.Subdirs
+                            : getFileSystemEntries(FileSystemEntity.Directories, recursionState.BaseDirectory, nextStep.DirectoryPattern, null, false);
+                    }
                 }
             }
 
@@ -917,9 +930,9 @@ namespace Microsoft.Build.Shared
                         recursionState.RemainingWildcardDirectory = indexOfNextSlash != -1 ? recursionState.RemainingWildcardDirectory.Substring(indexOfNextSlash + 1) : string.Empty;
                     }
                 }
-
+                ret.NeedsDirectoryRecursion = true;
                 ret.RemainingWildcardDirectory = recursionState.RemainingWildcardDirectory;
-                ret.Subdirs = getFileSystemEntries(FileSystemEntity.Directories, recursionState.BaseDirectory, pattern, null, false);
+                ret.DirectoryPattern = pattern;
             }
 
             return ret;
